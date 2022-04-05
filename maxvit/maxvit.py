@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 
 from timm.models.efficientnet_blocks import SqueezeExcite, DepthwiseSeparableConv
+from timm.models.layers import drop_path
 
 
 def _gelu_ignore_parameters(*args, **kwargs) -> nn.Module:
@@ -28,7 +29,7 @@ class MBConv(nn.Module):
     Args:
             in_channels (int): Number of input channels.
             out_channels (int): Number of output channels.
-            downscale (bool): If true downscale by a factor of two is performed.
+            downscale (bool): If true downscale by a factor of two is performed. Default: False
             act_layer (Type[nn.Module]): Type of activation layer to be utilized. Default: nn.GELU
             norm_layer (Type[nn.Module]): Type of normalization layer to be utilized. Default: nn.BatchNorm
     """
@@ -40,10 +41,13 @@ class MBConv(nn.Module):
             downscale: bool = False,
             act_layer: Type[nn.Module] = nn.GELU,
             norm_layer: Type[nn.Module] = nn.BatchNorm2d,
+            drop_path_rate: float = 0.,
     ) -> None:
         """ Constructor method """
         # Call super constructor
         super(MBConv, self).__init__()
+        # Save parameter
+        self.drop_path_rate: float = drop_path_rate
         # Check parameters for downscaling
         if not downscale:
             assert in_channels == out_channels, "If downscaling is utilized input and output channels must be equal."
@@ -54,7 +58,7 @@ class MBConv(nn.Module):
         self.main_path = nn.Sequential(
             norm_layer(in_channels),
             DepthwiseSeparableConv(in_chs=in_channels, out_chs=out_channels, stride=2 if downscale else 1,
-                                   act_layer=act_layer, norm_layer=norm_layer),
+                                   act_layer=act_layer, norm_layer=norm_layer, drop_path_rate=drop_path_rate),
             SqueezeExcite(in_chs=out_channels, rd_ratio=0.25),
             nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=(1, 1))
         )
@@ -73,7 +77,11 @@ class MBConv(nn.Module):
         Returns:
             x (torch.Tensor): Output tensor of the shape [B, C_out, H (// 2), W (// 2)] (downscaling is optional)
         """
-        x = self.main_path(x) + self.skip_path(x)
+        shortcut = self.skip_path(x)
+        x = self.main_path(x)
+        if self.drop_path_rate > 0.:
+            x = drop_path(x, self.drop_path_rate, self.training)
+        x += shortcut
         return x
 
 
@@ -81,15 +89,25 @@ class MaxViTBlock(nn.Module):
 
     def __init__(
             self,
-            depth: int,
             in_channels: int,
             out_channels: int,
+            downscale: bool = False,
+            num_heads: int = 32,
             act_layer=nn.GELU,
             norm_layer=nn.BatchNorm2d,
-            drop_path_rate=0.
+            drop_path_rate: float = 0.
     ) -> None:
         # Call super constructor
         super(MaxViTBlock, self).__init__()
+        # Init MBConv block
+        self.mb_conv = MBConv(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            downscale=downscale,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+            drop_path_rate=drop_path_rate
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """ Forward pass.

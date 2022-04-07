@@ -1,4 +1,4 @@
-from typing import Type
+from typing import Type, Callable, Tuple
 
 import torch
 import torch.nn as nn
@@ -7,8 +7,21 @@ from timm.models.efficientnet_blocks import SqueezeExcite, DepthwiseSeparableCon
 from timm.models.layers import drop_path
 
 
-def _gelu_ignore_parameters(*args, **kwargs) -> nn.Module:
-    return nn.GELU()
+def _gelu_ignore_parameters(
+        *args,
+        **kwargs
+) -> nn.Module:
+    """ Bad trick to ignore the inplace=True argument in the DepthwiseSeparableConv of Timm.
+
+    Args:
+        *args: Ignored.
+        **kwargs: Ignored.
+
+    Returns:
+        activation (nn.Module): GELU activation function.
+    """
+    activation = nn.GELU()
+    return activation
 
 
 class MBConv(nn.Module):
@@ -32,6 +45,7 @@ class MBConv(nn.Module):
             downscale (bool): If true downscale by a factor of two is performed. Default: False
             act_layer (Type[nn.Module]): Type of activation layer to be utilized. Default: nn.GELU
             norm_layer (Type[nn.Module]): Type of normalization layer to be utilized. Default: nn.BatchNorm
+            drop_path_rate (float): Dropout rate to be applied during training. Default 0.
     """
 
     def __init__(
@@ -68,14 +82,17 @@ class MBConv(nn.Module):
             nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=(1, 1))
         ) if downscale else nn.Identity()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+            self,
+            x: torch.Tensor
+    ) -> torch.Tensor:
         """ Forward pass.
 
         Args:
-            x (torch.Tensor): Input tensor of the shape [B, C_in, H, W]
+            x (torch.Tensor): Input tensor of the shape [B, C_in, H, W].
 
         Returns:
-            x (torch.Tensor): Output tensor of the shape [B, C_out, H (// 2), W (// 2)] (downscaling is optional)
+            x (torch.Tensor): Output tensor of the shape [B, C_out, H (// 2), W (// 2)] (downscaling is optional).
         """
         shortcut = self.skip_path(x)
         x = self.main_path(x)
@@ -83,6 +100,63 @@ class MBConv(nn.Module):
             x = drop_path(x, self.drop_path_rate, self.training)
         x += shortcut
         return x
+
+
+def grid_partition(
+        input: torch.Tensor,
+        grid_size: Tuple[int, int] = (7, 7)
+) -> torch.Tensor:
+    """ Grid partition function.
+
+    Args:
+        input (torch.Tensor): Input tensor of the shape [B, C, H, W].
+        grid_size (Tuple[int, int]): Grid size to be applied.
+
+    Returns:
+        grid (torch.Tensor): Unfolded input tensor of the shape [B * grids, grid_size[0], grid_size[1], C].
+    """
+    # Get size of input
+    B, C, H, W = input.shape
+    # Unfold input
+    grid = input.view(B, C, H // grid_size[0], grid_size[0], W // grid_size[1], grid_size[1])
+    # Permute and reshape to [B * grids, grid_size[0], grid_size[1], channels]
+    grid = grid.permute(0, 2, 4, 3, 5, 1).contiguous().view(-1, grid_size[0], grid_size[1], C)
+    return grid
+
+
+def grid_reverse(grid: torch.Tensor, original_size: Tuple[int, int],
+                 grid_size: Tuple[int, int] = (7, 7)) -> torch.Tensor:
+    """ Reverses the grid partition.
+
+    Args:
+        grid (torch.Tensor): Grid tensor of the shape [B * grids, grid_size[0], grid_size[1], C].
+        original_size (Tuple[int, int]): Original shape.
+        grid_size (Tuple[int, int]): Grid size to be applied.
+
+    Returns:
+        output (torch.Tensor): Folded output tensor of the shape [B, C, original_size[0], original_size[1]]
+    """
+    # Get height and width
+    H, W = original_size
+    # Compute original batch size
+    B = int(grid.shape[0] / (H * W / grid_size[0] / grid_size[1]))
+    # Fold grid tensor
+    output = grid.view(B, H // grid_size[0], W // grid_size[1], grid_size[0], grid_size[1], -1)
+    output = output.permute(0, 5, 1, 3, 2, 4).contiguous().view(B, -1, H, W)
+    return output
+
+
+class SelfAttention(nn.Module):
+
+    def __init__(
+            self,
+            in_channels: int,
+            partition_function: Callable,
+            reverse_function: Callable,
+            num_heads: int = 32,
+    ) -> None:
+        # Call super constructor
+        super(SelfAttention, self).__init__()
 
 
 class MaxViTBlock(nn.Module):
@@ -108,6 +182,9 @@ class MaxViTBlock(nn.Module):
             norm_layer=norm_layer,
             drop_path_rate=drop_path_rate
         )
+        # Init Block and Grid Attention
+        self.block_attention = nn.Identity()
+        self.grid_attention = nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """ Forward pass.
@@ -118,6 +195,7 @@ class MaxViTBlock(nn.Module):
         Returns:
             x (torch.Tensor): Output tensor of the shape [B, C_out, H // 2, W // 2]
         """
+        x = self.grid_attention(self.block_attention(self.mb_conv(x)))
         return x
 
 
@@ -126,6 +204,7 @@ class MaxViT(nn.Module):
 
 
 if __name__ == '__main__':
-    block = MBConv(in_channels=32, out_channels=64, downscale=True)
-    output = block(torch.rand(2, 32, 16, 16))
-    print(output.shape)
+    input = torch.rand(2, 3, 14, 14)
+    output = grid_partition(input=input)
+    output = grid_reverse(grid=output, original_size=input.shape[2:])
+    print(torch.all(input == output))

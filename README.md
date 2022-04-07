@@ -20,6 +20,8 @@ Alternatively, you can clone the repository and use the implementation in [maxvi
 
 ```python
 
+
+
 ```
 
 In case you want to use a custom configuration you can use the `MaxViT` class. The constructor method takes 

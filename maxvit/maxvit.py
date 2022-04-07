@@ -674,39 +674,43 @@ class MaxViT(nn.Module):
         return output
 
 
-def max_vit_tiny_224() -> MaxViT:
+def max_vit_tiny_224(**kwargs) -> MaxViT:
     """ MaxViT tiny for a resolution of 224 X 224"""
     return MaxViT(
         depths=(2, 2, 5, 2),
         channels=(64, 128, 256, 512),
-        embed_dim=64
+        embed_dim=64,
+        **kwargs
     )
 
 
-def max_vit_small_224() -> MaxViT:
+def max_vit_small_224(**kwargs) -> MaxViT:
     """ MaxViT small for a resolution of 224 X 224"""
     return MaxViT(
         depths=(2, 2, 5, 2),
         channels=(96, 128, 256, 512),
-        embed_dim=64
+        embed_dim=64,
+        **kwargs
     )
 
 
-def max_vit_base_224() -> MaxViT:
+def max_vit_base_224(**kwargs) -> MaxViT:
     """ MaxViT base for a resolution of 224 X 224"""
     return MaxViT(
         depths=(2, 6, 14, 2),
         channels=(96, 192, 384, 768),
-        embed_dim=64
+        embed_dim=64,
+        **kwargs
     )
 
 
-def max_vit_large_224() -> MaxViT:
+def max_vit_large_224(**kwargs) -> MaxViT:
     """ MaxViT large for a resolution of 224 X 224"""
     return MaxViT(
         depths=(2, 6, 14, 2),
         channels=(128, 256, 512, 1024),
-        embed_dim=128
+        embed_dim=128,
+        **kwargs
     )
 
 
@@ -748,12 +752,12 @@ if __name__ == '__main__':
         print(output.shape)
 
 
-    def test_network() -> None:
+    def test_networks() -> None:
         for get_network in [max_vit_tiny_224, max_vit_small_224, max_vit_base_224, max_vit_large_224]:
-            network = get_network()
+            network = get_network(num_classes=365)
             input = torch.rand(1, 3, 224, 224)
             output = network(input)
             print(output.shape)
 
 
-    test_network()
+    test_networks()

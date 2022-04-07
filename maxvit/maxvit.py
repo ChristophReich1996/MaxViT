@@ -102,6 +102,53 @@ class MBConv(nn.Module):
         return x
 
 
+def window_partition(
+        input: torch.Tensor,
+        window_size: Tuple[int, int] = (7, 7)
+) -> torch.Tensor:
+    """ Window partition function.
+
+    Args:
+        input (torch.Tensor): Input tensor of the shape [B, C, H, W].
+        window_size (Tuple[int, int]): Window size to be applied.
+
+    Returns:
+        windows (torch.Tensor): Unfolded input tensor of the shape [B * windows, window_size[0], window_size[1], C].
+    """
+    # Get size of input
+    B, C, H, W = input.shape
+    # Unfold input
+    windows = input.view(B, C, H // window_size[0], window_size[0], W // window_size[1], window_size[1])
+    # Permute and reshape to [B * windows, window_size[0], window_size[1], channels]
+    windows = windows.permute(0, 2, 4, 3, 5, 1).contiguous().view(-1, window_size[0], window_size[1], C)
+    return windows
+
+
+def window_reverse(
+        windows: torch.Tensor,
+        original_size: Tuple[int, int],
+        window_size: Tuple[int, int] = (7, 7)
+) -> torch.Tensor:
+    """ Reverses the window partition.
+
+    Args:
+        windows (torch.Tensor): Window tensor of the shape [B * windows, window_size[0], window_size[1], C].
+        original_size (Tuple[int, int]): Original shape.
+        window_size (Tuple[int, int]): Window size to be applied.
+
+    Returns:
+        output (torch.Tensor): Folded output tensor of the shape [B, C, original_size[0], original_size[1]]
+    """
+    # Get height and width
+    H, W = original_size
+    # Compute original batch size
+    B = int(windows.shape[0] / (H * W / window_size[0] / window_size[1]))
+    # Fold grid tensor
+    output = windows.view(B, H // window_size[0], W // window_size[1], window_size[0], window_size[1], -1)
+    output = output.permute(0, 5, 1, 3, 2, 4).contiguous().view(B, -1, H, W)
+    return output
+
+
 def grid_partition(
         input: torch.Tensor,
         grid_size: Tuple[int, int] = (7, 7)
@@ -118,31 +165,34 @@ def grid_partition(
     # Get size of input
     B, C, H, W = input.shape
     # Unfold input
-    grid = input.view(B, C, H // grid_size[0], grid_size[0], W // grid_size[1], grid_size[1])
-    # Permute and reshape to [B * grids, grid_size[0], grid_size[1], channels]
-    grid = grid.permute(0, 2, 4, 3, 5, 1).contiguous().view(-1, grid_size[0], grid_size[1], C)
-    return grid
+    windows = input.view(B, C, H // grid_size[0], grid_size[0], W // grid_size[1], grid_size[1])
+    # Permute and reshape [B * (H // grid_size[0]) * (W // grid_size[1]), grid_size[0], window_size[1], C]
+    windows = windows.permute(0, 3, 5, 2, 4, 1).contiguous().view(-1, grid_size[0], grid_size[1], C)
+    return windows
 
 
-def grid_reverse(grid: torch.Tensor, original_size: Tuple[int, int],
-                 grid_size: Tuple[int, int] = (7, 7)) -> torch.Tensor:
+def grid_reverse(
+        grid: torch.Tensor,
+        original_size: Tuple[int, int],
+        grid_size: Tuple[int, int] = (7, 7)
+) -> torch.Tensor:
     """ Reverses the grid partition.
 
     Args:
-        grid (torch.Tensor): Grid tensor of the shape [B * grids, grid_size[0], grid_size[1], C].
+        Grid (torch.Tensor): Grid tensor of the shape [B * grids, grid_size[0], grid_size[1], C].
         original_size (Tuple[int, int]): Original shape.
         grid_size (Tuple[int, int]): Grid size to be applied.
 
     Returns:
         output (torch.Tensor): Folded output tensor of the shape [B, C, original_size[0], original_size[1]]
     """
-    # Get height and width
-    H, W = original_size
+    # Get height, width, and channels
+    (H, W), C = original_size, grid.shape[-1]
     # Compute original batch size
     B = int(grid.shape[0] / (H * W / grid_size[0] / grid_size[1]))
     # Fold grid tensor
-    output = grid.view(B, H // grid_size[0], W // grid_size[1], grid_size[0], grid_size[1], -1)
-    output = output.permute(0, 5, 1, 3, 2, 4).contiguous().view(B, -1, H, W)
+    output = grid.view(B, grid_size[0], grid_size[1], H // grid_size[0], W // grid_size[1], C)
+    output = output.permute(0, 5, 3, 1, 4, 2).contiguous().view(B, C, H, W)
     return output
 
 
@@ -204,7 +254,10 @@ class MaxViT(nn.Module):
 
 
 if __name__ == '__main__':
-    input = torch.rand(2, 3, 14, 14)
-    output = grid_partition(input=input)
-    output = grid_reverse(grid=output, original_size=input.shape[2:])
-    print(torch.all(input == output))
+    input = torch.rand(7, 3, 14, 14)
+    windows = window_partition(input=input)
+    windows = window_reverse(windows=windows, window_size=(7, 7), original_size=input.shape[2:])
+    print(torch.all(input == windows))
+    grid = grid_partition(input=input)
+    grid = grid_reverse(grid=grid, grid_size=(7, 7), original_size=input.shape[2:])
+    print(torch.all(input == grid))

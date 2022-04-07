@@ -1,10 +1,10 @@
-from typing import Type, Callable, Tuple
+from typing import Type, Callable, Tuple, Optional, Set
 
 import torch
 import torch.nn as nn
 
 from timm.models.efficientnet_blocks import SqueezeExcite, DepthwiseSeparableConv
-from timm.models.layers import drop_path, trunc_normal_
+from timm.models.layers import drop_path, trunc_normal_, Mlp, DropPath
 
 
 def _gelu_ignore_parameters(
@@ -40,12 +40,12 @@ class MBConv(nn.Module):
         Note: This implementation differs slightly from the original MobileNet implementation!
 
     Args:
-            in_channels (int): Number of input channels.
-            out_channels (int): Number of output channels.
-            downscale (bool, optional): If true downscale by a factor of two is performed. Default: False
-            act_layer (Type[nn.Module], optional): Type of activation layer to be utilized. Default: nn.GELU
-            norm_layer (Type[nn.Module], optional): Type of normalization layer to be utilized. Default: nn.BatchNorm
-            drop_path_rate (float, optional): Dropout rate to be applied during training. Default 0.
+        in_channels (int): Number of input channels.
+        out_channels (int): Number of output channels.
+        downscale (bool, optional): If true downscale by a factor of two is performed. Default: False
+        act_layer (Type[nn.Module], optional): Type of activation layer to be utilized. Default: nn.GELU
+        norm_layer (Type[nn.Module], optional): Type of normalization layer to be utilized. Default: nn.BatchNorm2d
+        drop_path (float, optional): Dropout rate to be applied during training. Default 0.
     """
 
     def __init__(
@@ -55,13 +55,13 @@ class MBConv(nn.Module):
             downscale: bool = False,
             act_layer: Type[nn.Module] = nn.GELU,
             norm_layer: Type[nn.Module] = nn.BatchNorm2d,
-            drop_path_rate: float = 0.,
+            drop_path: float = 0.,
     ) -> None:
         """ Constructor method """
         # Call super constructor
         super(MBConv, self).__init__()
         # Save parameter
-        self.drop_path_rate: float = drop_path_rate
+        self.drop_path_rate: float = drop_path
         # Check parameters for downscaling
         if not downscale:
             assert in_channels == out_channels, "If downscaling is utilized input and output channels must be equal."
@@ -72,7 +72,7 @@ class MBConv(nn.Module):
         self.main_path = nn.Sequential(
             norm_layer(in_channels),
             DepthwiseSeparableConv(in_chs=in_channels, out_chs=out_channels, stride=2 if downscale else 1,
-                                   act_layer=act_layer, norm_layer=norm_layer, drop_path_rate=drop_path_rate),
+                                   act_layer=act_layer, norm_layer=norm_layer, drop_path_rate=drop_path),
             SqueezeExcite(in_chs=out_channels, rd_ratio=0.25),
             nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=(1, 1))
         )
@@ -84,22 +84,21 @@ class MBConv(nn.Module):
 
     def forward(
             self,
-            x: torch.Tensor
+            input: torch.Tensor
     ) -> torch.Tensor:
         """ Forward pass.
 
         Args:
-            x (torch.Tensor): Input tensor of the shape [B, C_in, H, W].
+            input (torch.Tensor): Input tensor of the shape [B, C_in, H, W].
 
         Returns:
-            x (torch.Tensor): Output tensor of the shape [B, C_out, H (// 2), W (// 2)] (downscaling is optional).
+            output (torch.Tensor): Output tensor of the shape [B, C_out, H (// 2), W (// 2)] (downscaling is optional).
         """
-        shortcut = self.skip_path(x)
-        x = self.main_path(x)
+        output = self.main_path(input)
         if self.drop_path_rate > 0.:
-            x = drop_path(x, self.drop_path_rate, self.training)
-        x += shortcut
-        return x
+            output = drop_path(output, self.drop_path_rate, self.training)
+        output = output + self.skip_path(input)
+        return output
 
 
 def window_partition(
@@ -110,7 +109,7 @@ def window_partition(
 
     Args:
         input (torch.Tensor): Input tensor of the shape [B, C, H, W].
-        window_size (Tuple[int, int], optional): Window size to be applied. Default (7, 7).
+        window_size (Tuple[int, int], optional): Window size to be applied. Default (7, 7)
 
     Returns:
         windows (torch.Tensor): Unfolded input tensor of the shape [B * windows, window_size[0], window_size[1], C].
@@ -157,7 +156,7 @@ def grid_partition(
 
     Args:
         input (torch.Tensor): Input tensor of the shape [B, C, H, W].
-        grid_size (Tuple[int, int], optional): Grid size to be applied. Default (7, 7).
+        grid_size (Tuple[int, int], optional): Grid size to be applied. Default (7, 7)
 
     Returns:
         grid (torch.Tensor): Unfolded input tensor of the shape [B * grids, grid_size[0], grid_size[1], C].
@@ -181,7 +180,7 @@ def grid_reverse(
     Args:
         Grid (torch.Tensor): Grid tensor of the shape [B * grids, grid_size[0], grid_size[1], C].
         original_size (Tuple[int, int]): Original shape.
-        grid_size (Tuple[int, int], optional): Grid size which have been applied. Default (7, 7).
+        grid_size (Tuple[int, int], optional): Grid size which have been applied. Default (7, 7)
 
     Returns:
         output (torch.Tensor): Folded output tensor of the shape [B, C, original_size[0], original_size[1]].
@@ -224,31 +223,26 @@ class RelativeSelfAttention(nn.Module):
     """ Relative Self-Attention similar to Swin V1. Implementation inspired by Timms Swin V1 implementation.
 
     Args:
-        in_channels (int): Number of input channels
-        partition_function (Callable): Partition function (grid or block).
-        reverse_function (Callable): Function to reverse partition function (grid or block).
-        num_heads (int, optional): Number of attention heads. Default 32.
-        grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7).
+        in_channels (int): Number of input channels.
+        num_heads (int, optional): Number of attention heads. Default 32
+        grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7)
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
-        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+        drop (float, optional): Dropout ratio of output. Default: 0.0
     """
 
     def __init__(
             self,
             in_channels: int,
-            partition_function: Callable,
-            reverse_function: Callable,
             num_heads: int = 32,
             grid_window_size: Tuple[int, int] = (7, 7),
             attn_drop: float = 0.,
-            proj_drop: float = 0.
+            drop: float = 0.
     ) -> None:
+        """ Constructor method """
         # Call super constructor
         super(RelativeSelfAttention, self).__init__()
         # Save parameters
         self.in_channels: int = in_channels
-        self.partition_function: Callable = partition_function
-        self.reverse_function: Callable = reverse_function
         self.num_heads: int = num_heads
         self.grid_window_size: Tuple[int, int] = grid_window_size
         self.scale: float = num_heads ** -0.5
@@ -257,7 +251,7 @@ class RelativeSelfAttention(nn.Module):
         self.qkv_mapping = nn.Linear(in_features=in_channels, out_features=3 * in_channels, bias=True)
         self.attn_drop = nn.Dropout(p=attn_drop)
         self.proj = nn.Linear(in_features=in_channels, out_features=in_channels, bias=True)
-        self.proj_drop = nn.Dropout(p=proj_drop)
+        self.proj_drop = nn.Dropout(p=drop)
         self.softmax = nn.Softmax(dim=-1)
         # Define a parameter table of relative position bias, shape: 2*Wh-1 * 2*Ww-1, nH
         self.relative_position_bias_table = nn.Parameter(
@@ -289,20 +283,15 @@ class RelativeSelfAttention(nn.Module):
         """ Forward pass.
 
         Args:
-            input (torch.Tensor): Input tensor of the shape [B, C, H, W].
+            input (torch.Tensor): Input tensor of the shape [B_, N, C].
 
         Returns:
-            output (torch.Tensor): Output tensor of the shape [B, C, H, W].
+            output (torch.Tensor): Output tensor of the shape [B_, N, C].
         """
-        # Save original shape
-        B, C, H, W = input.shape
-        # Perform partition
-        input_partitioned = self.partition_function(input, self.grid_window_size)
-        input_partitioned = input_partitioned.view(-1, self.grid_window_size[0] * self.grid_window_size[1], C)
-        # Get shape of partitioned input
-        B_, N = input_partitioned.shape[:2]
+        # Get shape of input
+        B_, N, C = input.shape
         # Perform query key value mapping
-        qkv = self.qkv_mapping(input_partitioned).reshape(B_, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv_mapping(input).reshape(B_, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         # Scale query
         q = q * self.scale
@@ -313,12 +302,115 @@ class RelativeSelfAttention(nn.Module):
         # Perform final projection and dropout
         output = self.proj(output)
         output = self.proj_drop(output)
+        return output
+
+
+class MaxViTTransformerBlock(nn.Module):
+    """ MaxViT Transformer block.
+
+        With block partition:
+        x ← x + Unblock(RelAttention(Block(LN(x))))
+        x ← x + MLP(LN(x))
+
+        With grid partition:
+        x ← x + Ungrid(RelAttention(Grid(LN(x))))
+        x ← x + MLP(LN(x))
+
+        Layer Normalization (LN) is applied after the grid/window partition to prevent multiple reshaping operations.
+        Grid/window reverse (Unblock/Ungrid) is performed on the final output for the same reason.
+
+    Args:
+        in_channels (int): Number of input channels.
+        partition_function (Callable): Partition function to be utilized (grid or window partition).
+        reverse_function (Callable): Reverse function to be utilized  (grid or window reverse).
+        num_heads (int, optional): Number of attention heads. Default 32
+        grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7)
+        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
+        drop (float, optional): Dropout ratio of output. Default: 0.0
+        drop_path (float, optional): Dropout ratio of path. Default: 0.0
+        mlp_ratio (float, optional): Ratio of mlp hidden dim to embedding dim. Default: 4.0
+        act_layer (Type[nn.Module], optional): Type of activation layer to be utilized. Default: nn.GELU
+        norm_layer (Type[nn.Module], optional): Type of normalization layer to be utilized. Default: nn.BatchNorm2d
+    """
+
+    def __init__(
+            self,
+            in_channels: int,
+            partition_function: Callable,
+            reverse_function: Callable,
+            num_heads: int = 32,
+            grid_window_size: Tuple[int, int] = (7, 7),
+            attn_drop: float = 0.,
+            drop=0.,
+            drop_path=0.,
+            mlp_ratio=4.,
+            act_layer=nn.GELU,
+            norm_layer=nn.LayerNorm,
+    ) -> None:
+        """ Constructor method """
+        super(MaxViTTransformerBlock, self).__init__()
+        # Save parameters
+        self.partition_function: Callable = partition_function
+        self.reverse_function: Callable = reverse_function
+        self.grid_window_size: Tuple[int, int] = grid_window_size
+        # Init layers
+        self.norm_1 = norm_layer(in_channels)
+        self.attention = RelativeSelfAttention(
+            in_channels=in_channels,
+            num_heads=num_heads,
+            grid_window_size=grid_window_size,
+            attn_drop=attn_drop,
+            drop=drop
+        )
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm_2 = norm_layer(in_channels)
+        self.mlp = Mlp(
+            in_features=in_channels,
+            hidden_features=int(mlp_ratio * in_channels),
+            act_layer=act_layer,
+            drop=drop
+        )
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        """ Forward pass.
+
+        Args:
+            input (torch.Tensor): Input tensor of the shape [B, C_in, H, W].
+
+        Returns:
+            output (torch.Tensor): Output tensor of the shape [B, C_out, H (// 2), W (// 2)].
+        """
+        # Save original shape
+        B, C, H, W = input.shape
+        # Perform partition
+        input_partitioned = self.partition_function(input, self.grid_window_size)
+        input_partitioned = input_partitioned.view(-1, self.grid_window_size[0] * self.grid_window_size[1], C)
+        # Perform normalization, attention, and dropout
+        output = input_partitioned + self.drop_path(self.attention(self.norm_1(input_partitioned)))
+        # Perform normalization, MLP, and dropout
+        output = output * self.drop_path(self.mlp(self.norm_2(output)))
         # Reverse partition
         output = self.reverse_function(output, (H, W), self.grid_window_size)
         return output
 
 
 class MaxViTBlock(nn.Module):
+    """ MaxViT block composed of MBConv block, Block Attention, and Grid Attention.
+
+    Args:
+        in_channels (int): Number of input channels.
+        out_channels (int): Number of output channels.
+        downscale (bool, optional): If true spatial downscaling is performed. Default: False
+        num_heads (int, optional): Number of attention heads. Default 32
+        grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7)
+        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
+        drop (float, optional): Dropout ratio of output. Default: 0.0
+        drop_path (float, optional): Dropout ratio of path. Default: 0.0
+        mlp_ratio (float, optional): Ratio of mlp hidden dim to embedding dim. Default: 4.0
+        act_layer (Type[nn.Module], optional): Type of activation layer to be utilized. Default: nn.GELU
+        norm_layer (Type[nn.Module], optional): Type of normalization layer to be utilized. Default: nn.BatchNorm2d
+        norm_layer_transformer (Type[nn.Module], optional): Normalization layer in Transformer. Default: nn.LayerNorm
+    """
 
     def __init__(
             self,
@@ -326,10 +418,16 @@ class MaxViTBlock(nn.Module):
             out_channels: int,
             downscale: bool = False,
             num_heads: int = 32,
+            grid_window_size: Tuple[int, int] = (7, 7),
+            attn_drop: float = 0.,
+            drop=0.,
+            drop_path=0.,
+            mlp_ratio=4.,
             act_layer=nn.GELU,
             norm_layer=nn.BatchNorm2d,
-            drop_path_rate: float = 0.
+            norm_layer_transformer=nn.LayerNorm
     ) -> None:
+        """ Constructor method """
         # Call super constructor
         super(MaxViTBlock, self).__init__()
         # Init MBConv block
@@ -339,27 +437,175 @@ class MaxViTBlock(nn.Module):
             downscale=downscale,
             act_layer=act_layer,
             norm_layer=norm_layer,
-            drop_path_rate=drop_path_rate
+            drop_path=drop_path
         )
-        # Init Block and Grid Attention
-        self.block_attention = nn.Identity()
-        self.grid_attention = nn.Identity()
+        # Init Block and Grid Transformer
+        self.block_transformer = MaxViTTransformerBlock(
+            in_channels=out_channels,
+            partition_function=window_partition,
+            reverse_function=window_reverse,
+            num_heads=num_heads,
+            grid_window_size=grid_window_size,
+            attn_drop=attn_drop,
+            drop=drop,
+            drop_path=drop_path,
+            mlp_ratio=mlp_ratio,
+            act_layer=act_layer,
+            norm_layer=norm_layer_transformer
+        )
+        self.grid_transformer = MaxViTTransformerBlock(
+            in_channels=out_channels,
+            partition_function=grid_partition,
+            reverse_function=grid_reverse,
+            num_heads=num_heads,
+            grid_window_size=grid_window_size,
+            attn_drop=attn_drop,
+            drop=drop,
+            drop_path=drop_path,
+            mlp_ratio=mlp_ratio,
+            act_layer=act_layer,
+            norm_layer=norm_layer_transformer
+        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         """ Forward pass.
 
         Args:
-            x (torch.Tensor): Input tensor of the shape [B, C_in, H, W]
+            input (torch.Tensor): Input tensor of the shape [B, C_in, H, W]
 
         Returns:
-            x (torch.Tensor): Output tensor of the shape [B, C_out, H // 2, W // 2]
+            output (torch.Tensor): Output tensor of the shape [B, C_out, H // 2, W // 2] (downscaling is optional)
         """
-        x = self.grid_attention(self.block_attention(self.mb_conv(x)))
-        return x
+        output = self.grid_transformer(self.block_transformer(self.mb_conv(input)))
+        return output
+
+
+class MaxViTStage(nn.Module):
+    """ Stage of the MaxViT.
+
+    Args:
+        depth (int): Depth of the stage.
+        in_channels (int): Number of input channels.
+        out_channels (int): Number of output channels.
+        num_heads (int, optional): Number of attention heads. Default 32
+        grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7)
+        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
+        drop (float, optional): Dropout ratio of output. Default: 0.0
+        drop_path (float, optional): Dropout ratio of path. Default: 0.0
+        mlp_ratio (float, optional): Ratio of mlp hidden dim to embedding dim. Default: 4.0
+        act_layer (Type[nn.Module], optional): Type of activation layer to be utilized. Default: nn.GELU
+        norm_layer (Type[nn.Module], optional): Type of normalization layer to be utilized. Default: nn.BatchNorm2d
+        norm_layer_transformer (Type[nn.Module], optional): Normalization layer in Transformer. Default: nn.LayerNorm
+    """
+
+    def __init__(
+            self,
+            depth: int,
+            in_channels: int,
+            out_channels: int,
+            num_heads: int = 32,
+            grid_window_size: Tuple[int, int] = (7, 7),
+            attn_drop: float = 0.,
+            drop=0.,
+            drop_path=0.,
+            mlp_ratio=4.,
+            act_layer=nn.GELU,
+            norm_layer=nn.BatchNorm2d,
+            norm_layer_transformer=nn.LayerNorm
+    ) -> None:
+        """ Constructor method """
+        # Call super constructor
+        super(MaxViTStage, self).__init__()
+        # Init blocks
+        self.blocks = nn.Sequential(*[
+            MaxViTBlock(
+                in_channels=in_channels if i == 0 else out_channels,
+                out_channels=out_channels,
+                downscale=i == 0,
+                num_heads=num_heads,
+                grid_window_size=grid_window_size,
+                attn_drop=attn_drop,
+                drop=drop,
+                drop_path=drop_path,
+                mlp_ratio=mlp_ratio,
+                act_layer=act_layer,
+                norm_layer=norm_layer,
+                norm_layer_transformer=norm_layer_transformer
+            )
+            for i in range(depth)
+        ])
+
+    def forward(self, input=torch.Tensor) -> torch.Tensor:
+        """ Forward pass.
+
+        Args:
+            input (torch.Tensor): Input tensor of the shape [B, C_in, H, W].
+
+        Returns:
+            output (torch.Tensor): Output tensor of the shape [B, C_out, H // 2, W // 2].
+        """
+        output = self.blocks(input)
+        return output
 
 
 class MaxViT(nn.Module):
-    pass
+
+    def __init__(self) -> None:
+        # Call super constructor
+        super(MaxViT, self).__init__()
+
+    @torch.jit.ignore
+    def no_weight_decay(self) -> Set[str]:
+        """ Gets the names of parameters to not apply weight decay to.
+
+        Returns:
+            nwd (Set[str]): Set of parameter names to not apply weight decay to.
+        """
+        nwd = set()
+        for n, _ in self.named_parameters():
+            if "relative_position_bias_table" in n:
+                nwd.add(n)
+        return nwd
+
+    def reset_classifier(self, num_classes: int, global_pool: Optional[str] = None) -> None:
+        """Method results the classification head
+
+        Args:
+            num_classes (int): Number of classes to be predicted
+            global_pool (str, optional): If not global pooling is updated
+        """
+        self.num_classes: int = num_classes
+        if global_pool is not None:
+            self.global_pool = global_pool
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+
+    def forward_features(self, input: torch.Tensor) -> torch.Tensor:
+        pass
+
+    def forward_head(self, input: torch.Tensor, pre_logits: bool = False):
+        """ Forward pass of classification head.
+
+        Args:
+            input (torch.Tensor):
+            pre_logits (bool, optional):
+
+        Returns:
+            output (torch.Tensor):
+        """
+        if self.global_pool == "avg":
+            input = input.mean(dim=(2, 3))
+        return input if pre_logits else self.head(input)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        """ Forward pass
+
+        Args:
+            input (torch.Tensor):
+
+        Returns:
+            output (torch.Tensor):
+        """
+        pass
 
 
 if __name__ == '__main__':
@@ -374,11 +620,30 @@ if __name__ == '__main__':
 
 
     def test_relative_self_attention() -> None:
-        relative_self_attention = RelativeSelfAttention(in_channels=128, partition_function=grid_partition,
-                                                        reverse_function=grid_reverse)
-        input = torch.rand(4, 128, 14, 14)
+        relative_self_attention = RelativeSelfAttention(in_channels=128)
+        input = torch.rand(4, 128, 14 * 14)
         output = relative_self_attention(input)
         print(output.shape)
 
 
-    test_relative_self_attention()
+    def test_transformer_block() -> None:
+        transformer = MaxViTTransformerBlock(in_channels=128, partition_function=grid_partition,
+                                             reverse_function=grid_reverse)
+        input = torch.rand(4, 128, 7, 7)
+        output = transformer(input)
+        print(output.shape)
+        transformer = MaxViTTransformerBlock(in_channels=128, partition_function=window_partition,
+                                             reverse_function=window_reverse)
+        input = torch.rand(4, 128, 7, 7)
+        output = transformer(input)
+        print(output.shape)
+
+
+    def test_block() -> None:
+        block = MaxViTBlock(in_channels=128, out_channels=256, downscale=True)
+        input = torch.rand(1, 128, 28, 28)
+        output = block(input)
+        print(output.shape)
+
+
+    test_block()

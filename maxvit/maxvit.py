@@ -1,4 +1,4 @@
-from typing import Type, Callable, Tuple, Optional, Set
+from typing import Type, Callable, Tuple, Optional, Set, List, Union
 
 import torch
 import torch.nn as nn
@@ -341,11 +341,11 @@ class MaxViTTransformerBlock(nn.Module):
             num_heads: int = 32,
             grid_window_size: Tuple[int, int] = (7, 7),
             attn_drop: float = 0.,
-            drop=0.,
-            drop_path=0.,
-            mlp_ratio=4.,
-            act_layer=nn.GELU,
-            norm_layer=nn.LayerNorm,
+            drop: float = 0.,
+            drop_path: float = 0.,
+            mlp_ratio: float = 4.,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = nn.LayerNorm,
     ) -> None:
         """ Constructor method """
         super(MaxViTTransformerBlock, self).__init__()
@@ -420,12 +420,12 @@ class MaxViTBlock(nn.Module):
             num_heads: int = 32,
             grid_window_size: Tuple[int, int] = (7, 7),
             attn_drop: float = 0.,
-            drop=0.,
-            drop_path=0.,
-            mlp_ratio=4.,
-            act_layer=nn.GELU,
-            norm_layer=nn.BatchNorm2d,
-            norm_layer_transformer=nn.LayerNorm
+            drop: float = 0.,
+            drop_path: float = 0.,
+            mlp_ratio: float = 4.,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = nn.BatchNorm2d,
+            norm_layer_transformer: Type[nn.Module] = nn.LayerNorm
     ) -> None:
         """ Constructor method """
         # Call super constructor
@@ -506,12 +506,12 @@ class MaxViTStage(nn.Module):
             num_heads: int = 32,
             grid_window_size: Tuple[int, int] = (7, 7),
             attn_drop: float = 0.,
-            drop=0.,
-            drop_path=0.,
-            mlp_ratio=4.,
-            act_layer=nn.GELU,
-            norm_layer=nn.BatchNorm2d,
-            norm_layer_transformer=nn.LayerNorm
+            drop: float = 0.,
+            drop_path: Union[List[float], float] = 0.,
+            mlp_ratio: float = 4.,
+            act_layer: Type[nn.Module] = nn.GELU,
+            norm_layer: Type[nn.Module] = nn.BatchNorm2d,
+            norm_layer_transformer: Type[nn.Module] = nn.LayerNorm
     ) -> None:
         """ Constructor method """
         # Call super constructor
@@ -519,20 +519,20 @@ class MaxViTStage(nn.Module):
         # Init blocks
         self.blocks = nn.Sequential(*[
             MaxViTBlock(
-                in_channels=in_channels if i == 0 else out_channels,
+                in_channels=in_channels if index == 0 else out_channels,
                 out_channels=out_channels,
-                downscale=i == 0,
+                downscale=index == 0,
                 num_heads=num_heads,
                 grid_window_size=grid_window_size,
                 attn_drop=attn_drop,
                 drop=drop,
-                drop_path=drop_path,
+                drop_path=drop_path if isinstance(drop_path, float) else drop_path[index],
                 mlp_ratio=mlp_ratio,
                 act_layer=act_layer,
                 norm_layer=norm_layer,
                 norm_layer_transformer=norm_layer_transformer
             )
-            for i in range(depth)
+            for index in range(depth)
         ])
 
     def forward(self, input=torch.Tensor) -> torch.Tensor:
@@ -550,9 +550,62 @@ class MaxViTStage(nn.Module):
 
 class MaxViT(nn.Module):
 
-    def __init__(self) -> None:
+    def __init__(
+            self,
+            in_channels: int = 3,
+            depths: Tuple[int, ...] = (2, 2, 5, 2),
+            channels: Tuple[int, ...] = (64, 128, 256, 512),
+            num_classes: int = 1000,
+            embed_dim: int = 64,
+            num_heads: int = 32,
+            grid_window_size: Tuple[int, int] = (7, 7),
+            attn_drop: float = 0.,
+            drop=0.,
+            drop_path=0.,
+            mlp_ratio=4.,
+            act_layer=nn.GELU,
+            norm_layer=nn.BatchNorm2d,
+            norm_layer_transformer=nn.LayerNorm,
+            global_pool: str = "avg"
+    ) -> None:
         # Call super constructor
         super(MaxViT, self).__init__()
+        # Check parameters
+        assert len(depths) == len(channels), "For each stage a channel dimension must be given."
+        # Save parameters
+        self.num_classes: int = num_classes
+        # Init convolutional stem
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_channels=in_channels, out_channels=embed_dim, kernel_size=(3, 3), stride=(2, 2),
+                      padding=(1, 1)),
+            act_layer(),
+            nn.Conv2d(in_channels=embed_dim, out_channels=embed_dim, kernel_size=(3, 3), stride=(1, 1),
+                      padding=(1, 1)),
+            act_layer(),
+        )
+        # Init blocks
+        drop_path = torch.linspace(0.0, drop_path, sum(depths)).tolist()
+        self.stages = []
+        for index, (depth, channel) in enumerate(zip(depths, channels)):
+            self.stages.append(
+                MaxViTStage(
+                    depth=depth,
+                    in_channels=embed_dim if index == 0 else channels[index - 1],
+                    out_channels=channel,
+                    num_heads=num_heads,
+                    grid_window_size=grid_window_size,
+                    attn_drop=attn_drop,
+                    drop=drop,
+                    drop_path=drop_path[sum(depths[:index]):sum(depths[:index + 1])],
+                    mlp_ratio=mlp_ratio,
+                    act_layer=act_layer,
+                    norm_layer=norm_layer,
+                    norm_layer_transformer=norm_layer_transformer
+                )
+            )
+
+        self.global_pool: str = global_pool
+        self.head = nn.Linear(channels[-1], num_classes)
 
     @torch.jit.ignore
     def no_weight_decay(self) -> Set[str]:
@@ -580,17 +633,28 @@ class MaxViT(nn.Module):
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_features(self, input: torch.Tensor) -> torch.Tensor:
-        pass
+        """ Forward pass of feature extraction.
+
+        Args:
+            input (torch.Tensor): Input images of the shape [B, C, H, W].
+
+        Returns:
+            output (torch.Tensor): Image features of the backbone.
+        """
+        output = input
+        for stage in self.stages:
+            output = stage(output)
+        return output
 
     def forward_head(self, input: torch.Tensor, pre_logits: bool = False):
         """ Forward pass of classification head.
 
         Args:
-            input (torch.Tensor):
-            pre_logits (bool, optional):
+            input (torch.Tensor): Input features
+            pre_logits (bool, optional): If true pre-logits are returned
 
         Returns:
-            output (torch.Tensor):
+            output (torch.Tensor): Classification output of the shape [B, num_classes].
         """
         if self.global_pool == "avg":
             input = input.mean(dim=(2, 3))
@@ -600,12 +664,50 @@ class MaxViT(nn.Module):
         """ Forward pass
 
         Args:
-            input (torch.Tensor):
+            input (torch.Tensor): Input images of the shape [B, C, H, W].
 
         Returns:
-            output (torch.Tensor):
+            output (torch.Tensor): Classification output of the shape [B, num_classes].
         """
-        pass
+        output = self.forward_features(self.stem(input))
+        output = self.forward_head(output)
+        return output
+
+
+def max_vit_tiny_224() -> MaxViT:
+    """ MaxViT tiny for a resolution of 224 X 224"""
+    return MaxViT(
+        depths=(2, 2, 5, 2),
+        channels=(64, 128, 256, 512),
+        embed_dim=64
+    )
+
+
+def max_vit_small_224() -> MaxViT:
+    """ MaxViT small for a resolution of 224 X 224"""
+    return MaxViT(
+        depths=(2, 2, 5, 2),
+        channels=(96, 128, 256, 512),
+        embed_dim=64
+    )
+
+
+def max_vit_base_224() -> MaxViT:
+    """ MaxViT base for a resolution of 224 X 224"""
+    return MaxViT(
+        depths=(2, 6, 14, 2),
+        channels=(96, 192, 384, 768),
+        embed_dim=64
+    )
+
+
+def max_vit_large_224() -> MaxViT:
+    """ MaxViT large for a resolution of 224 X 224"""
+    return MaxViT(
+        depths=(2, 6, 14, 2),
+        channels=(128, 256, 512, 1024),
+        embed_dim=128
+    )
 
 
 if __name__ == '__main__':
@@ -646,4 +748,12 @@ if __name__ == '__main__':
         print(output.shape)
 
 
-    test_block()
+    def test_network() -> None:
+        for get_network in [max_vit_tiny_224, max_vit_small_224, max_vit_base_224, max_vit_large_224]:
+            network = get_network()
+            input = torch.rand(1, 3, 224, 224)
+            output = network(input)
+            print(output.shape)
+
+
+    test_network()

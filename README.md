@@ -4,6 +4,10 @@ Unofficial **PyTorch** reimplementation of the
 paper [MaxViT: Multi-Axis Vision Transformer](https://arxiv.org/pdf/2204.01697.pdf)
 by Zhengzhong Tu et al. (Google Research).
 
+<p align="center">
+  <img src="maxvit.png"  alt="1" width = 674px height = 306px >
+</p>
+
 ## Installation
 
 You can simply install the MaxViT implementation as a Python package by using `pip`.

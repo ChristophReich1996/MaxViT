@@ -1,7 +1,5 @@
 # MaxViT: Multi-Axis Vision Transformer
 
-**Work in progress!**
-
 Unofficial **PyTorch** reimplementation of the
 paper [MaxViT: Multi-Axis Vision Transformer](https://arxiv.org/pdf/2204.01697.pdf)
 by Zhengzhong Tu et al. (Google Research).
@@ -15,6 +13,9 @@ pip install git+https://github.com/ChristophReich1996/MaxViT
 ```
 
 Alternatively, you can clone the repository and use the implementation in [maxvit](maxvit) directly in your project.
+
+This implementation only relies on PyTorch and [Timm](https://github.com/rwightman/pytorch-image-models) (
+see [requirements.txt](requirements.txt)).
 
 ## Usage
 
@@ -55,9 +56,21 @@ following parameters.
 
 | Parameter | Description | Type |
 | ------------- | ------------- | ------------- |
-| in_channels | Number of input channels | int |
-
-[This file](example.py) includes a full example how to use this implementation.
+| in_channels | Number of input channels to the convolutional stem. Default 3 | int, optional |
+| depths | Depth of each network stage. Default (2, 2, 5, 2) | Tuple[int, ...], optional |
+| channels | Number of channels in each network stage. Default (64, 128, 256, 512) | Tuple[int, ...], optional |
+| num_classes | Number of classes to be predicted. Default 1000 | int, optional |
+| embed_dim | Embedding dimension of the convolutional stem. Default 64 | int, optional |
+| num_heads | Number of attention heads. Default 32 | int, optional |
+| grid_window_size | Grid/Window size to be utilized. Default (7, 7) | Tuple[int, int], optional |
+| attn_drop | Dropout ratio of attention weight. Default: 0.0 | float, optional |
+| drop | Dropout ratio of output. Default: 0.0 | float, optional |
+| drop_path | Dropout ratio of path. Default: 0.0 | float, optional |
+| mlp_ratio | Ratio of mlp hidden dim to embedding dim. Default: 4.0 | float, optional |
+| act_layer | Type of activation layer to be utilized. Default: nn.GELU | Type[nn.Module], optional |
+| norm_layer | Type of normalization layer to be utilized. Default: nn.BatchNorm2d | Type[nn.Module], optional |
+| norm_layer_transformer | Normalization layer in Transformer. Default: nn.LayerNorm | Type[nn.Module], optional |
+| global_pool | Global polling type to be utilized. Default "avg" | str, optional |
 
 ## Disclaimer
 

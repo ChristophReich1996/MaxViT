@@ -1,3 +1,12 @@
+""" MaxViT
+
+A PyTorch implementation of the paper: `MaxViT: Multi-Axis Vision Transformer`
+    - MaxViT: Multi-Axis Vision Transformer
+
+Copyright (c) 2021 Christoph Reich
+Licensed under The MIT License [see LICENSE for details]
+Written by Christoph Reich
+"""
 from typing import Type, Callable, Tuple, Optional, Set, List, Union
 
 import torch
@@ -549,6 +558,26 @@ class MaxViTStage(nn.Module):
 
 
 class MaxViT(nn.Module):
+    """ Implementation of the MaxViT proposed in:
+        https://arxiv.org/pdf/2204.01697.pdf
+
+    Args:
+        in_channels (int, optional): Number of input channels to the convolutional stem. Default 3
+        depths (Tuple[int, ...], optional): Depth of each network stage. Default (2, 2, 5, 2)
+        channels (Tuple[int, ...], optional): Number of channels in each network stage. Default (64, 128, 256, 512)
+        num_classes (int, optional): Number of classes to be predicted. Default 1000
+        embed_dim (int, optional): Embedding dimension of the convolutional stem. Default 64
+        num_heads (int, optional): Number of attention heads. Default 32
+        grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7)
+        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
+        drop (float, optional): Dropout ratio of output. Default: 0.0
+        drop_path (float, optional): Dropout ratio of path. Default: 0.0
+        mlp_ratio (float, optional): Ratio of mlp hidden dim to embedding dim. Default: 4.0
+        act_layer (Type[nn.Module], optional): Type of activation layer to be utilized. Default: nn.GELU
+        norm_layer (Type[nn.Module], optional): Type of normalization layer to be utilized. Default: nn.BatchNorm2d
+        norm_layer_transformer (Type[nn.Module], optional): Normalization layer in Transformer. Default: nn.LayerNorm
+        global_pool (str, optional): Global polling type to be utilized. Default "avg"
+    """
 
     def __init__(
             self,
@@ -568,10 +597,12 @@ class MaxViT(nn.Module):
             norm_layer_transformer=nn.LayerNorm,
             global_pool: str = "avg"
     ) -> None:
+        """ Constructor method """
         # Call super constructor
         super(MaxViT, self).__init__()
         # Check parameters
         assert len(depths) == len(channels), "For each stage a channel dimension must be given."
+        assert global_pool in ["avg", "max"], f"Only avg and max is supported but {global_pool} is given"
         # Save parameters
         self.num_classes: int = num_classes
         # Init convolutional stem
@@ -658,6 +689,8 @@ class MaxViT(nn.Module):
         """
         if self.global_pool == "avg":
             input = input.mean(dim=(2, 3))
+        elif self.global_pool == "max":
+            input = torch.amax(input, dim=(2, 3))
         return input if pre_logits else self.head(input)
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:

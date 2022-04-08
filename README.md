@@ -8,6 +8,8 @@ by Zhengzhong Tu et al. (Google Research).
   <img src="maxvit.png"  alt="1" width = 674px height = 306px >
 </p>
 
+Figure taken from [paper](https://arxiv.org/pdf/2204.01697.pdf).
+
 ## Installation
 
 You can simply install the MaxViT implementation as a Python package by using `pip`.

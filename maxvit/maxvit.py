@@ -176,7 +176,7 @@ def grid_partition(
     grid = input.view(B, C, grid_size[0], H // grid_size[0], grid_size[1], W // grid_size[1])
     # Permute and reshape [B * (H // grid_size[0]) * (W // grid_size[1]), grid_size[0], window_size[1], C]
     grid = grid.permute(0, 3, 5, 2, 4, 1).contiguous().view(-1, grid_size[0], grid_size[1], C)
-    return windows
+    return grid
 
 
 def grid_reverse(

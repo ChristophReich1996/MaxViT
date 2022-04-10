@@ -173,9 +173,9 @@ def grid_partition(
     # Get size of input
     B, C, H, W = input.shape
     # Unfold input
-    windows = input.view(B, C, H // grid_size[0], grid_size[0], W // grid_size[1], grid_size[1])
+    grid = input.view(B, C, grid_size[0], H // grid_size[0], grid_size[1], W // grid_size[1])
     # Permute and reshape [B * (H // grid_size[0]) * (W // grid_size[1]), grid_size[0], window_size[1], C]
-    windows = windows.permute(0, 3, 5, 2, 4, 1).contiguous().view(-1, grid_size[0], grid_size[1], C)
+    grid = grid.permute(0, 3, 5, 2, 4, 1).contiguous().view(-1, grid_size[0], grid_size[1], C)
     return windows
 
 
@@ -199,7 +199,7 @@ def grid_reverse(
     # Compute original batch size
     B = int(grid.shape[0] / (H * W / grid_size[0] / grid_size[1]))
     # Fold grid tensor
-    output = grid.view(B, grid_size[0], grid_size[1], H // grid_size[0], W // grid_size[1], C)
+    output = grid.view(B, H // grid_size[0], W // grid_size[1], grid_size[0], grid_size[1], C)
     output = output.permute(0, 5, 3, 1, 4, 2).contiguous().view(B, C, H, W)
     return output
 

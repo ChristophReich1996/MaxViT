@@ -634,7 +634,7 @@ class MaxViT(nn.Module):
                     norm_layer_transformer=norm_layer_transformer
                 )
             )
-
+        self.stages = nn.Sequential(*self.stages)
         self.global_pool: str = global_pool
         self.head = nn.Linear(channels[-1], num_classes)
 
@@ -672,10 +672,8 @@ class MaxViT(nn.Module):
         Returns:
             output (torch.Tensor): Image features of the backbone.
         """
-        output = input
-        for stage in self.stages:
-            output = stage(output)
-        return output
+
+        return self.stages(input)
 
     def forward_head(self, input: torch.Tensor, pre_logits: bool = False):
         """ Forward pass of classification head.
@@ -793,4 +791,6 @@ if __name__ == '__main__':
             print(output.shape)
 
 
-    test_networks()
+    # test_networks()
+    model = max_vit_base_224(num_classes=10)
+    print(model)

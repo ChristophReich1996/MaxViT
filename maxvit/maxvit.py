@@ -672,7 +672,10 @@ class MaxViT(nn.Module):
         Returns:
             output (torch.Tensor): Image features of the backbone.
         """
-
+        # output = input
+        # for stage in self.stages:
+        #     output = stage(output)
+        # return output
         return self.stages(input)
 
     def forward_head(self, input: torch.Tensor, pre_logits: bool = False):
@@ -793,4 +796,6 @@ if __name__ == '__main__':
 
     # test_networks()
     model = max_vit_base_224(num_classes=10)
-    print(model)
+    from torchsummary import summary
+    data = torch.rand(1, 3, 224, 224)
+    summary(model, data, device='cpu')

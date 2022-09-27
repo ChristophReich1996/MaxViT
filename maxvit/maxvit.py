@@ -80,6 +80,7 @@ class MBConv(nn.Module):
         # Make main path
         self.main_path = nn.Sequential(
             norm_layer(in_channels),
+            nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=(1, 1)),
             DepthwiseSeparableConv(in_chs=in_channels, out_chs=out_channels, stride=2 if downscale else 1,
                                    act_layer=act_layer, norm_layer=norm_layer, drop_path_rate=drop_path),
             SqueezeExcite(in_chs=out_channels, rd_ratio=0.25),
@@ -760,8 +761,8 @@ if __name__ == '__main__':
 
 
     def test_relative_self_attention() -> None:
-        relative_self_attention = RelativeSelfAttention(in_channels=128)
-        input = torch.rand(4, 128, 14 * 14)
+        relative_self_attention = RelativeSelfAttention(in_channels=128, grid_window_size=(14, 14))
+        input = torch.rand(4, 14 * 14, 128)
         output = relative_self_attention(input)
         print(output.shape)
 
@@ -794,8 +795,4 @@ if __name__ == '__main__':
             print(output.shape)
 
 
-    # test_networks()
-    model = max_vit_base_224(num_classes=10)
-    from torchsummary import summary
-    data = torch.rand(1, 3, 224, 224)
-    summary(model, data, device='cpu')
+    test_relative_self_attention()

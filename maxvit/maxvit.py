@@ -397,7 +397,7 @@ class MaxViTTransformerBlock(nn.Module):
         # Perform normalization, attention, and dropout
         output = input_partitioned + self.drop_path(self.attention(self.norm_1(input_partitioned)))
         # Perform normalization, MLP, and dropout
-        output = output * self.drop_path(self.mlp(self.norm_2(output)))
+        output = output + self.drop_path(self.mlp(self.norm_2(output)))
         # Reverse partition
         output = self.reverse_function(output, (H, W), self.grid_window_size)
         return output

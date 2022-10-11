@@ -80,6 +80,7 @@ class MBConv(nn.Module):
         # Make main path
         self.main_path = nn.Sequential(
             norm_layer(in_channels),
+            nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=(1, 1)),
             DepthwiseSeparableConv(in_chs=in_channels, out_chs=out_channels, stride=2 if downscale else 1,
                                    act_layer=act_layer, norm_layer=norm_layer, drop_path_rate=drop_path),
             SqueezeExcite(in_chs=out_channels, rd_ratio=0.25),
@@ -634,7 +635,7 @@ class MaxViT(nn.Module):
                     norm_layer_transformer=norm_layer_transformer
                 )
             )
-
+        self.stages = nn.Sequential(*self.stages)
         self.global_pool: str = global_pool
         self.head = nn.Linear(channels[-1], num_classes)
 
@@ -672,10 +673,11 @@ class MaxViT(nn.Module):
         Returns:
             output (torch.Tensor): Image features of the backbone.
         """
-        output = input
-        for stage in self.stages:
-            output = stage(output)
-        return output
+        # output = input
+        # for stage in self.stages:
+        #     output = stage(output)
+        # return output
+        return self.stages(input)
 
     def forward_head(self, input: torch.Tensor, pre_logits: bool = False):
         """ Forward pass of classification head.
@@ -759,8 +761,8 @@ if __name__ == '__main__':
 
 
     def test_relative_self_attention() -> None:
-        relative_self_attention = RelativeSelfAttention(in_channels=128)
-        input = torch.rand(4, 128, 14 * 14)
+        relative_self_attention = RelativeSelfAttention(in_channels=128, grid_window_size=(14, 14))
+        input = torch.rand(4, 14 * 14, 128)
         output = relative_self_attention(input)
         print(output.shape)
 
@@ -793,4 +795,4 @@ if __name__ == '__main__':
             print(output.shape)
 
 
-    test_networks()
+    test_relative_self_attention()

@@ -80,6 +80,7 @@ class MBConv(nn.Module):
         # Make main path
         self.main_path = nn.Sequential(
             norm_layer(in_channels),
+            nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=(1, 1)),
             DepthwiseSeparableConv(in_chs=in_channels, out_chs=out_channels, stride=2 if downscale else 1,
                                    act_layer=act_layer, norm_layer=norm_layer, drop_path_rate=drop_path),
             SqueezeExcite(in_chs=out_channels, rd_ratio=0.25),

@@ -12,6 +12,8 @@ by Zhengzhong Tu et al. (Google Research).
 
 Figure taken from [paper](https://arxiv.org/pdf/2204.01697.pdf).
 
+**Note** [timm](https://github.com/rwightman/pytorch-image-models) offers pre-trained MaxViT weights on ImageNet!
+
 ## Installation
 
 You can simply install the MaxViT implementation as a Python package by using `pip`.

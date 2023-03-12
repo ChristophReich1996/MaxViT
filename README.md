@@ -1,6 +1,6 @@
 # MaxViT: Multi-Axis Vision Transformer
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ChristophReich1996/Swin-Transformer-V2/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ChristophReich1996/MaxViT/blob/master/LICENSE)
 
 Unofficial **PyTorch** reimplementation of the
 paper [MaxViT: Multi-Axis Vision Transformer](https://arxiv.org/pdf/2204.01697.pdf)
